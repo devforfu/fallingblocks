@@ -5,15 +5,13 @@ from pygame.locals import *
 
 import figures
 import graphics
-from config import Screen, Color
+from config import Screen, Color, Path
 
 
 class Game:
     FRAME_NUMBER = 0
 
     def __init__(self, style: str):
-        pygame.init()
-
         self.screen = pygame.display.set_mode(Screen.SCREEN_RECT.bottomright, DOUBLEBUF)
         self.clock = pygame.time.Clock()
 
@@ -21,6 +19,8 @@ class Game:
         self.active_figure = None # figure which is currently manipulated by player
         self.next_figure = None
         self.style = style
+        self.score = 0
+        self.ended, self.isWin, self.isLose = False, False, False
 
         self.background = pygame.Surface(self.screen.get_size())
         self.background = self.background.convert()
@@ -38,6 +38,8 @@ class Game:
         import random
         types = [
             figures.PlankFigure,
+            figures.PlankFigure,
+            figures.SquareFigure,
             figures.SquareFigure,
             figures.LFigure,
             figures.TFigure,
@@ -59,32 +61,26 @@ class Game:
         """
         from itertools import groupby
         from operator import itemgetter
+        import proto
 
-        # collecting block's coordinates
-        y_coords = sorted([block.get_y() for block in self.fallen_blocks])
-        # group equal coordinates together
-        y_coords = [list(g) for k, g in groupby(y_coords)]
-        # take coordinates of complete rows
-        y_coords = list(map(itemgetter(0),
-                            (filter(lambda x: len(x) == Screen.BOARD_COLS, y_coords))))
-        y_coords.sort()
+        isRemoved = True
+        count = 0
 
-        if y_coords: # if there are some complete rows
-            removing_blocks = [block for block in self.fallen_blocks if block.get_y() in y_coords]
-            fringe_blocks = [block for block in self.fallen_blocks if block.get_y() < y_coords[0]]
-            bottom_blocks = [block for block in self.fallen_blocks if block.get_y() > y_coords[-1]]
-
-            self.fallen_blocks.remove(removing_blocks) # then remove them
-
-            while True: # and move other blocks on the appropriate distance
-                for block in fringe_blocks:
-                    block.move_block_down()
-                collided = pygame.sprite.groupcollide
-                if collided(fringe_blocks, bottom_blocks, False, False) \
-                    or any([b.get_y() == 20 for b in fringe_blocks]):
-                    for block in fringe_blocks:
-                        block.move_block_up()
+        while isRemoved:
+            isRemoved = False
+            for y in range(Screen.BOARD_ROWS, 0, -1):
+                blocks = [b for b in self.fallen_blocks if b.get_y() == y]
+                if len(blocks) == Screen.BOARD_COLS:
+                    upper_blocks = [b for b in self.fallen_blocks if b.get_y() < y]
+                    for b in upper_blocks:
+                        b.move_block_down()
+                    for b in blocks:
+                        b.kill()
+                    isRemoved = True
+                    count += 1
                     break
+
+        self.score += 100 * count * count
 
     def game_over(self):
         image, rect = graphics.load_image('gameover_bg32.png')
@@ -98,26 +94,42 @@ class Game:
         self.screen.blit(image, shifted)
 
     def draw_background(self):
+        """ Includes drawing of sky, border, crane and background for info"""
         screen = self.screen
+
         # draw ground and sky
         image, rect = graphics.load_image('back.png')
         image.set_alpha(200)
         for x in range(0, Screen.SCREEN_RECT.width, rect.width):
             screen.blit(image, (x, 0))
+
         # draw builder crane
         image, rect = graphics.load_image('tap.png')
         image.set_colorkey(image.get_at((1,1)))
         screen.blit(image, (100, Screen.SCREEN_RECT.height - 128 - rect.height))
+
         # draw fence
         image, rect = graphics.load_image('border.png', (255, 255, 255))
         image.set_alpha(200)
         for x in range(0, Screen.SCREEN_RECT.width, rect.width):
             screen.blit(image, (x, 0))
+
         # draw transparent blue rect (game info will be placed over it)
         image, rect = graphics.load_image('info_bg32.png')
-        image = pygame.transform.scale(image, Screen.SCREEN_RECT.size)
+        image = pygame.transform.scale(image, Screen.INFO_RECT.size)
         image.set_alpha(120)
-        self.screen.blit(image, (Screen.PIXEL_BOARD_WIDTH, 0))
+        screen.blit(image, (Screen.PIXEL_BOARD_WIDTH, 0))
+
+    def draw_fonts(self):
+        font = pygame.font.Font(Path.FONT_DEFAULT, 32)
+        self.screen.blit(font.render('next', False, Color.DARK_BLUE), (357, 320))
+        # game score
+        self.screen.blit(font.render('score', False, Color.DARK_BLUE), (340, 50))
+        score = str(self.score)
+        n = len(score)
+        if n < 5:
+            score = '0' * (5-n) + score
+        self.screen.blit(font.render(score, False, Color.DARK_BLUE), (340, 90))
 
     def draw_grid(self):
         """ Function draws rectangular grid on the game board """
@@ -131,7 +143,15 @@ class Game:
             pygame.draw.line(self.screen, (87, 87, 87), (x, 0), (x, height), 1)
 
     def draw_next_figure(self):
-        figure = self.next_figure.copy_to((15, 15))
+        figure = self.next_figure.copy_to((Screen.BOARD_COLS + 3, Screen.BOARD_ROWS - 7))
+        x = Screen.PIXEL_BLOCK_SIZE * (Screen.BOARD_COLS + 1)
+        y = Screen.PIXEL_BLOCK_SIZE * (Screen.BOARD_ROWS - 9)
+        w = h = Screen.PIXEL_BLOCK_SIZE * 4
+        self.screen.fill(
+            (22, 22, 22),
+            Rect(x, y, w, h),
+            BLEND_ADD
+        )
         figure.draw(self.screen)
 
     def init_figures(self):
@@ -139,7 +159,16 @@ class Game:
         self.next_figure = self.random_figure()
         self.active_figure.set_game_ref(self)
 
+    def reset(self):
+        self.fallen_blocks = pygame.sprite.Group()
+        self.active_figure, self.next_figure = None, None
+        self.ended, self.isWin, self.isLose = False, False, False
+
     def mainloop(self):
+        """ Game event loop. Returns boolean value when game is ended.
+            If player chooses 'New game' then it function returns
+            True, else - returns False.
+        """
         self.init_figures()
         screen, background = self.screen, self.background
 
@@ -152,10 +181,7 @@ class Game:
             # background drawing
             screen.blit(background, (0, 0))
             self.draw_background()
-
-            font = pygame.font.Font('fonts/pixel.ttf', 48)
-            # screen.blit(font.render('01234', False, Color.BLACK), (350, 400))
-
+            self.draw_fonts()
             # game board grid drawing
             self.draw_grid()
             # draw controlled by player figure and already fallen blocks
@@ -166,40 +192,62 @@ class Game:
             for event in pygame.event.get(): # dispatch game event
                 if event.type == QUIT:
                     sys.exit(0)
-                elif event.type == KEYDOWN:
-                    k = event.key
-                    if k == K_ESCAPE:
-                        sys.exit(0)
-                    elif k == K_LEFT:
-                        self.active_figure.move_left()
-                    elif k == K_RIGHT:
-                        self.active_figure.move_right()
-                    elif k == K_DOWN:
-                        self.active_figure.rotate_counterclockwise()
-                    elif k == K_UP:
-                        self.active_figure.rotate_clockwise()
-                    elif k == K_SPACE:
-                        # speed up figure moving
-                        slowdownRate = 1
 
-            if not Game.FRAME_NUMBER % slowdownRate:
-                self.active_figure.move_down()
-                if self.active_figure.is_landed():
-                    if self.active_figure.get_center()[1] == 1:
-                        self.game_over()
-                        self.active_figure.update()
-                        self.fallen_blocks.update()
-                        pygame.display.update()
-                        input('Press any key...')
-                        sys.exit(0)
+                elif not self.ended: # keyboard polling if game is not ended
+                    if event.type == KEYDOWN:
+                        k = event.key
+                        if k == K_ESCAPE:
+                            sys.exit(0)
+                        elif k == K_LEFT:
+                            self.active_figure.move_left()
+                        elif k == K_RIGHT:
+                            self.active_figure.move_right()
+                        elif k == K_DOWN:
+                            self.active_figure.rotate_counterclockwise()
+                        elif k == K_UP:
+                            self.active_figure.rotate_clockwise()
+                        elif k == K_SPACE:
+                            # speed up figure moving
+                            slowdownRate = 1
 
-                    self.fallen_blocks.add(self.active_figure.sprites())
-                    self.active_figure = self.next_figure
-                    self.active_figure.set_game_ref(self)
-                    self.next_figure = self.random_figure()
-                    self.check_rows()
-                    slowdownRate = 10 # slow down game speed when figure is landed
+                elif self.ended:  # if game ended then exit
+                    if event.type == KEYDOWN:
+                        if event.key == K_ESCAPE:
+                            return False
+                        else:
+                            return True
+
+            if self.isWin:  # player won
+                pass
+
+            elif self.isLose:  # player lose
+                self.game_over()
+                self.active_figure.update()
+                self.fallen_blocks.update()
+
+            else:  # game is going
+                if not Game.FRAME_NUMBER % slowdownRate:
+                    self.active_figure.move_down()
+                    if self.active_figure.is_landed():
+                        # if new figure cannot move down then game is over
+                        if self.active_figure.get_center()[1] == 1:
+                            self.ended = True
+                            self.isLose = True
+                        else:
+                            self.fallen_blocks.add(self.active_figure.sprites())
+                            self.active_figure = self.next_figure
+                            self.active_figure.set_game_ref(self)
+                            self.next_figure = self.random_figure()
+                            self.check_rows()
+                            slowdownRate = 10  # slow down game speed when figure is landed
 
             self.active_figure.update()
             self.fallen_blocks.update()
             pygame.display.update()
+
+    def run(self):
+        newGame = True
+        while newGame:
+            self.reset()
+            newGame = self.mainloop()
+        sys.exit(0)

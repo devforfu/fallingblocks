@@ -47,6 +47,71 @@ class Rotate:
         return list(map(transform, fig))
 
 
+class ConnectedComponents:
+    """ Takes list of coordinates and returns list of lists
+        with connected points
+
+        >>> cc = ConnectedComponents.search([(5,2), (6,2), (8,6), (8,8), (8,9), (9,8), (9, 9)])
+        >>> for line in cc: print(cc)
+        [(5, 2), (6, 2)]
+        [(8, 6)]
+        [(8, 8), (8, 9), (9, 8), (9, 9)]
+    """
+    @staticmethod
+    def left(pos):
+        x, y = pos
+        if x < 1:
+            return None
+        return x-1, y
+
+    @staticmethod
+    def right(pos):
+        x, y = pos
+        if x >= 10:
+            return None
+        return x+1, y
+
+    @staticmethod
+    def up(pos):
+        x, y = pos
+        if y < 1:
+            return None
+        return x, y-1
+
+    @staticmethod
+    def down(pos):
+        x, y = pos
+        if y >= 10:
+            return None
+        return x, y+1
+
+    @staticmethod
+    def search(coords):
+        import collections
+        cc = ConnectedComponents
+        connected_components = []
+        while coords:
+            start, coords = coords[0], coords[1:]
+            closed = [start]
+            fringe = collections.deque()
+            fringe.append(start)
+
+            while fringe:
+                u = fringe.popleft()
+                neighbors = cc.left(u), cc.right(u), cc.up(u), cc.down(u)
+                for pair in neighbors:
+                    if pair not in coords:
+                        continue
+                    if pair is not None and pair not in closed:
+                        fringe.append(pair)
+                        closed.append(pair)
+                        coords.remove(pair)
+
+            connected_components.append(closed)
+
+        return connected_components
+
+
 if __name__ == '__main__':
     plank = [(-2, 0), (-1, 0), (0, 0), (1, 0)]
     theta = [(-1, -1), (0, -1), (0, 0), (1, -1)]
